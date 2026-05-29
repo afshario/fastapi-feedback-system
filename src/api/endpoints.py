@@ -5,6 +5,15 @@ from sqlalchemy.orm import Session
 from .requestmodels import *
 from .requestmodels import *
 import bcrypt
+from jose import jwt
+from datetime import datetime, timedelta, timezone
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+SECRET_KEY = os.getenv("SECRET_KEY")
+ALGORITHM = os.getenv("ALGORITHM")
 
 router = APIRouter()
 Base.metadata.create_all(bind=engine)
@@ -14,56 +23,103 @@ Base.metadata.create_all(bind=engine)
 # AUTH ENDPOINTS
 # =======================================================
 
-@router.post("/auth/login")
-async def login():
-    return {"message": "Login endpoint"}
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.now(timezone.utc) + timedelta(hours=1)
+    to_encode.update({
+        "exp": expire
+    })
+    return jwt.encode(
+        to_encode,
+        SECRET_KEY,
+        algorithm=ALGORITHM
+    )
+
+@router.post("/auth/login",
+    status_code=status.HTTP_200_OK)
+async def login(
+    request: LoginRequest,
+    db: Session = Depends(get_db)
+):
+    user = (
+        db.query(Users)
+        .filter(Users.email == request.email)
+        .first()
+    )
+
+    if not user:
+        raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid email or password"
+        )
+      
+    password_correct = bcrypt.checkpw(
+        request.password.encode("utf-8"),
+        user.password.encode("utf-8")
+    )
+
+    if not password_correct:
+        raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid email or password"
+        )
+      
+    access_token = create_access_token({
+    "sub": str(user.id)
+    })
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer"
+    }
+      
 
 
 @router.post("/auth/register",
-            status_code=status.HTTP_201_CREATED,
+    status_code=status.HTTP_201_CREATED,
             )
 async def register(
-      request: RegisterRequest,
-      db: Session = Depends(get_db)
-      ):
-      existing_username = (
-            db.query(Users)
-            .filter(Users.username == request.username)
-            .first()
-      )
-      existing_email = (
-            db.query(Users)
-            .filter(Users.email == request.email)
-            .first()
-      )
-      if existing_email :
-            raise HTTPException(
-                  status_code=status.HTTP_409_CONFLICT,
-                  detail="Email already exists"
-            )
+    request: RegisterRequest,
+    db: Session = Depends(get_db)
+    ):
+    existing_username = (
+        db.query(Users)
+        .filter(Users.username == request.username)
+        .first()
+    )
+    existing_email = (
+        db.query(Users)
+        .filter(Users.email == request.email)
+        .first()
+    )
+    if existing_email :
+        raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Email already exists"
+        )
       
-      if existing_username:
-            raise HTTPException(
-                  status_code=status.HTTP_409_CONFLICT,
-                  detail="username already exists"
-            )
+    if existing_username:
+        raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="username already exists"
+        )
       
-      hashed_password = bcrypt.hashpw(
-            request.password.encode("utf-8"),
-            bcrypt.gensalt()
-            ).decode("utf-8")
+    hashed_password = bcrypt.hashpw(
+        request.password.encode("utf-8"),
+        bcrypt.gensalt()
+        ).decode("utf-8")
       
-      new_user = Users(
-            username=request.username,
-            email=request.email,
-            password=hashed_password
-      )
+    new_user = Users(
+        username=request.username,
+        email=request.email,
+        password=hashed_password
+    )
 
-      db.add(new_user)
-      db.commit()
-      db.refresh(new_user)
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
 
-      return new_user
+    return new_user
 
 
 # =======================================================
