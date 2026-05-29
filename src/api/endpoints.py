@@ -1,6 +1,10 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, status, HTTPException
 from db import *
 from models.users import Users
+from sqlalchemy.orm import Session
+from .requestmodels import *
+from .requestmodels import *
+import bcrypt
 
 router = APIRouter()
 Base.metadata.create_all(bind=engine)
@@ -15,9 +19,51 @@ async def login():
     return {"message": "Login endpoint"}
 
 
-@router.post("/auth/register")
-async def register():
-    return {"message": "Register endpoint"}
+@router.post("/auth/register",
+            status_code=status.HTTP_201_CREATED,
+            )
+async def register(
+      request: RegisterRequest,
+      db: Session = Depends(get_db)
+      ):
+      existing_username = (
+            db.query(Users)
+            .filter(Users.username == request.username)
+            .first()
+      )
+      existing_email = (
+            db.query(Users)
+            .filter(Users.email == request.email)
+            .first()
+      )
+      if existing_email :
+            raise HTTPException(
+                  status_code=status.HTTP_409_CONFLICT,
+                  detail="Email already exists"
+            )
+      
+      if existing_username:
+            raise HTTPException(
+                  status_code=status.HTTP_409_CONFLICT,
+                  detail="username already exists"
+            )
+      
+      hashed_password = bcrypt.hashpw(
+            request.password.encode("utf-8"),
+            bcrypt.gensalt()
+            ).decode("utf-8")
+      
+      new_user = Users(
+            username=request.username,
+            email=request.email,
+            password=hashed_password
+      )
+
+      db.add(new_user)
+      db.commit()
+      db.refresh(new_user)
+
+      return new_user
 
 
 # =======================================================
