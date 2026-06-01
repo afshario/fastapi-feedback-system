@@ -3,17 +3,14 @@ from db import *
 from models.users import Users
 from sqlalchemy.orm import Session
 from .requestmodels import *
-from .requestmodels import *
+from .responsemodels import *
 import bcrypt
 from jose import jwt
 from datetime import datetime, timedelta, timezone
-import os
-from dotenv import load_dotenv
+from .dependencies import verify_jwt
+from config import SECRET_KEY , ALGORITHM
 
-load_dotenv()
 
-SECRET_KEY = os.getenv("SECRET_KEY")
-ALGORITHM = os.getenv("ALGORITHM")
 
 router = APIRouter()
 Base.metadata.create_all(bind=engine)
@@ -126,24 +123,84 @@ async def register(
 # USERS ENDPOINTS
 # =======================================================
 
-@router.get("/users")
-async def get_users():
-    return {"message": "Get all users"}
+@router.get("/users",
+        response_model=list[UserResponse],
+        status_code= status.HTTP_200_OK
+)
+async def get_users(db: Session = Depends(get_db),
+                    req : dict = Depends(verify_jwt)):
+    return db.query(Users).all()
 
 
-@router.get("/users/{id}")
-async def get_user(id: int):
-    return {"message": f"Get user {id}"}
+@router.get("/users/{id}",
+            response_model=UserResponse,
+            status_code= status.HTTP_200_OK)
+async def get_user( id: int,
+                    db: Session = Depends(get_db),
+                    req : dict = Depends(verify_jwt)):
+    user = db.query(Users).filter(Users.id == id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
 
 
-@router.put("/users/{id}")
-async def update_user(id: int):
-    return {"message": f"Update user {id}"}
+
+@router.put("/users/{id}",
+            response_model=UserResponse,
+            status_code= status.HTTP_200_OK)
+async def update_user(id: int,
+                    updated_user: UpdateUser,
+                    db: Session = Depends(get_db),
+                    req : dict = Depends(verify_jwt),
+                    ):
+    user = db.query(Users).filter(Users.id == id).first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    existing_username = (
+        db.query(Users)
+        .filter((Users.username == updated_user.username) & (Users.id != id))
+        .first()
+    )
+    if existing_username:
+        raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="username already exists"
+        )
+    existing_email = (
+        db.query(Users)
+        .filter((Users.email == updated_user.email) &  (Users.id != id))
+        .first()
+    )
+    if existing_email :
+        raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Email already exists"
+        )
+    user.username = updated_user.username
+    user.email = updated_user.email
+    user.is_active = updated_user.is_active
+
+    db.commit()
+    db.refresh(user)
+
+    return user
 
 
-@router.delete("/users/{id}")
-async def delete_user(id: int):
-    return {"message": f"Delete user {id}"}
+@router.delete("/users/{id}",
+               status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(id: int,
+                    db: Session = Depends(get_db),
+                    req : dict = Depends(verify_jwt)):
+    user = db.query(Users).filter(Users.id == id).first()
+    if not user:
+        raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="user does'nt exist"
+        )
+    db.delete(user)
+    db.commit()
 
 
 # =======================================================
