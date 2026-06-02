@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, status, HTTPException
 from db import *
-from models.users import Users
+from models import users , posts, tags
 from sqlalchemy.orm import Session
 from .requestmodels import *
 from .responsemodels import *
@@ -22,7 +22,7 @@ Base.metadata.create_all(bind=engine)
 
 def create_access_token(data: dict):
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + timedelta(hours=1)
+    expire = datetime.now(timezone.utc) + timedelta(hours=24)
     to_encode.update({
         "exp": expire
     })
@@ -39,8 +39,8 @@ async def login(
     db: Session = Depends(get_db)
 ):
     user = (
-        db.query(Users)
-        .filter(Users.email == request.email)
+        db.query(users.Users)
+        .filter(users.Users.email == request.email)
         .first()
     )
 
@@ -62,7 +62,8 @@ async def login(
         )
       
     access_token = create_access_token({
-    "sub": str(user.id)
+    "sub": str(user.id),
+    "username" : user.username
     })
 
     return {
@@ -80,13 +81,13 @@ async def register(
     db: Session = Depends(get_db)
     ):
     existing_username = (
-        db.query(Users)
-        .filter(Users.username == request.username)
+        db.query(users.Users)
+        .filter(users.Users.username == request.username)
         .first()
     )
     existing_email = (
-        db.query(Users)
-        .filter(Users.email == request.email)
+        db.query(users.Users)
+        .filter(users.Users.email == request.email)
         .first()
     )
     if existing_email :
@@ -106,7 +107,7 @@ async def register(
         bcrypt.gensalt()
         ).decode("utf-8")
       
-    new_user = Users(
+    new_user = users.Users(
         username=request.username,
         email=request.email,
         password=hashed_password
@@ -129,7 +130,7 @@ async def register(
 )
 async def get_users(db: Session = Depends(get_db),
                     req : dict = Depends(verify_jwt)):
-    return db.query(Users).all()
+    return db.query(users.Users).all()
 
 
 @router.get("/users/{id}",
@@ -138,7 +139,7 @@ async def get_users(db: Session = Depends(get_db),
 async def get_user( id: int,
                     db: Session = Depends(get_db),
                     req : dict = Depends(verify_jwt)):
-    user = db.query(Users).filter(Users.id == id).first()
+    user = db.query(users.Users).filter(users.Users.id == id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
@@ -153,14 +154,14 @@ async def update_user(id: int,
                     db: Session = Depends(get_db),
                     req : dict = Depends(verify_jwt),
                     ):
-    user = db.query(Users).filter(Users.id == id).first()
+    user = db.query(users.Users).filter(users.Users.id == id).first()
 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
     existing_username = (
-        db.query(Users)
-        .filter((Users.username == updated_user.username) & (Users.id != id))
+        db.query(users.Users)
+        .filter((users.Users.username == updated_user.username) & (users.Users.id != id))
         .first()
     )
     if existing_username:
@@ -169,8 +170,8 @@ async def update_user(id: int,
                 detail="username already exists"
         )
     existing_email = (
-        db.query(Users)
-        .filter((Users.email == updated_user.email) &  (Users.id != id))
+        db.query(users.Users)
+        .filter((users.Users.email == updated_user.email) &  (users.Users.id != id))
         .first()
     )
     if existing_email :
@@ -193,7 +194,7 @@ async def update_user(id: int,
 async def delete_user(id: int,
                     db: Session = Depends(get_db),
                     req : dict = Depends(verify_jwt)):
-    user = db.query(Users).filter(Users.id == id).first()
+    user = db.query(users.Users).filter(users.Users.id == id).first()
     if not user:
         raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -208,28 +209,87 @@ async def delete_user(id: int,
 # =======================================================
 
 @router.get("/feedbacks")
-async def get_feedbacks():
-    return {"message": "Get all feedbacks"}
-
+async def get_feedbacks(db: Session = Depends(get_db),
+                        req : dict = Depends(verify_jwt)):
+    return db.query(posts.Posts).all()
+    
 
 @router.get("/feedbacks/{id}")
-async def get_feedback(id: int):
-    return {"message": f"Get feedback {id}"}
+async def get_feedback(id: int,
+                       db: Session = Depends(get_db),
+                        req : dict = Depends(verify_jwt)):
+    post = db.query(posts.Posts).filter(posts.Posts.id == id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    return post.tags
 
 
 @router.post("/feedbacks")
-async def create_feedback():
-    return {"message": "Create feedback"}
+async def create_feedback(post_data: PostCreate,
+                        db: Session = Depends(get_db),
+                        req : dict = Depends(verify_jwt)):
+    post = posts.Posts(
+        author=req["username"],
+        title=post_data.title,
+        content=post_data.content
+    )
+
+    for tag_name in post_data.tags:
+        tag = db.query(tags.Tag).filter(tags.Tag.name == tag_name).first()
+        if not tag:
+            continue
+        post.tags.append(tag)
+
+    db.add(post)
+    db.commit()
+    db.refresh(post)
+
+    return post
 
 
 @router.put("/feedbacks/{id}")
-async def update_feedback(id: int):
-    return {"message": f"Update feedback {id}"}
+async def update_feedback(id: int,
+                          updated_post : PostUpdate,
+                        db: Session = Depends(get_db),
+                        req : dict = Depends(verify_jwt)):
+    
+    post = db.query(posts.Posts).filter(posts.Posts.id == id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+
+    update_data = updated_post.model_dump(exclude_unset=True)
+    tag_names = update_data.pop("tags", None)
+
+    for key, value in update_data.items():
+        setattr(post, key, value)
+
+    if tag_names is not None:
+    
+        post.tags.clear()
+
+        for tag_name in tag_names:
+            tag = db.query(tags.Tag)\
+                .filter(tags.Tag.name == tag_name)\
+                .first()
+            if tag:
+                post.tags.append(tag)
+
+    db.add(post)
+    db.commit()
+    db.refresh(post)
+
+    return post
 
 
 @router.delete("/feedbacks/{id}")
-async def delete_feedback(id: int):
-    return {"message": f"Delete feedback {id}"}
+async def delete_feedback(id: int,
+                          db: Session = Depends(get_db),
+                          req : dict = Depends(verify_jwt)):
+    post = db.query(posts.Posts).filter(posts.Posts.id == id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    db.delete(post)
+    db.commit()
 
 
 # =======================================================

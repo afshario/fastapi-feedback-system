@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum, UniqueConstraint
 from sqlalchemy.sql import func
-from src.db import Base
+from db import Base
 
 class Comments(Base):
     __tablename__ = "comments"

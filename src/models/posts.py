@@ -1,7 +1,7 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Table
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from src.db import Base
+from db import Base
 
 post_tags = Table(
     "post_tags",
@@ -14,7 +14,7 @@ class Posts(Base):
     __tablename__ = "posts"
     
     id = Column(Integer, primary_key=True, index=True)
-    author = Column(ForeignKey("users.id"))
+    author = Column(ForeignKey("users.username"))
     title = Column(String(100),nullable= False,unique= False)
     content = Column(String(500),nullable= False,unique= False)
     uvotec = Column(Integer,nullable= False,unique= False ,default= 0)

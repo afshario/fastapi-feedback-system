@@ -14,3 +14,16 @@ class UpdateUser(BaseModel):
     email: EmailStr
     is_active : bool
     
+
+class PostCreate(BaseModel):
+    title: str
+    content: str
+    tags: list[str] = []
+
+class PostUpdate(BaseModel):
+    title: str
+    content: str
+    tags: list[str] = []
+    uvotec : int
+    dvotec : int
+    is_open : bool
