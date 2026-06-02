@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, status, HTTPException
 from db import *
-from models import users , posts, tags
+from models import users , posts, tags, comments
 from sqlalchemy.orm import Session
 from .requestmodels import *
 from .responsemodels import *
@@ -297,24 +297,60 @@ async def delete_feedback(id: int,
 # =======================================================
 
 @router.get("/feedbacks/{id}/comments")
-async def get_feedback_comments(id: int):
-    return {"message": f"Get comments for feedback {id}"}
+async def get_feedback_comments(id: int,
+                                db: Session = Depends(get_db),
+                                req : dict = Depends(verify_jwt)):
+    post = db.query(posts.Posts).filter(posts.Posts.id == id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    comment = db.query(comments.Comments).filter(comments.Comments.post == id).all()
+    return comment
 
 
 @router.post("/feedbacks/{id}/comments")
-async def create_comment(id: int):
-    return {"message": f"Add comment to feedback {id}"}
+async def create_comment(id: int,
+                        comment : CommentCreate,
+                        db: Session = Depends(get_db),
+                        req : dict = Depends(verify_jwt)):
+    post = db.query(posts.Posts).filter(posts.Posts.id == id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    new_comment = comments.Comments(
+        writer = req["username"],
+        post = id,
+        content = comment.content
+    )
+    db.add(new_comment)
+    db.commit()
+
+    return new_comment
 
 
 @router.get("/comments/{id}")
-async def get_comment(id: int):
-    return {"message": f"Get comment {id}"}
+async def get_comment(id: int,
+                    db: Session = Depends(get_db),
+                    req : dict = Depends(verify_jwt)):
+    comment = db.query(comments.Comments).filter(comments.Comments.id == id).first()
+    if not comment:
+        raise HTTPException(status_code=404, detail="comment not found")
+    
+    return comment
 
 
-@router.delete("/comments/{comment_id}")
-async def delete_comment(comment_id: int):
-    return {"message": f"Delete comment {comment_id}"}
+@router.delete("/comments/{id}",
+               status_code= status.HTTP_204_NO_CONTENT)
+async def delete_comment(id: int,
+                        db: Session = Depends(get_db),
+                        req : dict = Depends(verify_jwt)):
 
+    comment = db.query(comments.Comments).filter(comments.Comments.id == id).first()
+    if not comment:
+        raise HTTPException(status_code=404, detail="comment not found")
+    
+    db.delete(comment)
+    db.commit()
+
+    return {}
 
 # =======================================================
 # RESPONSES ENDPOINTS

@@ -27,3 +27,7 @@ class PostUpdate(BaseModel):
     uvotec : int
     dvotec : int
     is_open : bool
+
+
+class CommentCreate(BaseModel):
+    content: str
