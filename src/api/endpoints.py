@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, status, HTTPException
-from db import *
-from models import users , posts, tags, comments
+from fastapi import (APIRouter, status, HTTPException, Depends)
+from db import (Base, engine, get_db)
+from models import (users, posts, tags, comments, votes)
 from sqlalchemy.orm import Session
-from .requestmodels import *
-from .responsemodels import *
+from requestmodels import (RegisterRequest, LoginRequest, UpdateUser, PostCreate, PostUpdate, CommentCreate, VoteCreate)
+from responsemodels import (RegisterResponse, UserResponse)
 import bcrypt
 from jose import jwt
 from datetime import datetime, timedelta, timezone
@@ -221,6 +221,7 @@ async def get_feedback(id: int,
     post = db.query(posts.Posts).filter(posts.Posts.id == id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
+    
     return post.tags
 
 
@@ -353,6 +354,83 @@ async def delete_comment(id: int,
     return {}
 
 # =======================================================
+# VOTES ENDPOINTS
+# =======================================================
+
+@router.get("/feedbacks/{id}/votes")
+async def get_feedback_votes(id: int,
+                            db: Session = Depends(get_db),
+                            req : dict = Depends(verify_jwt)):
+
+    return db.query(votes.Votes).filter(votes.Votes.post == id).all()
+
+
+@router.post("/feedbacks/{id}/votes")
+async def create_vote(id: int,
+                      vote: VoteCreate,
+                    db: Session = Depends(get_db),
+                    req : dict = Depends(verify_jwt)):
+    
+    post = db.query(posts.Posts).filter(posts.Posts.id == id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    new_vote = votes.Votes(
+        voter=req["sub"],
+        post=id,
+        type=vote.type
+    )
+
+    db.add(new_vote)
+
+    if vote.type == "down":
+        post.dvotec += 1
+    else:
+        post.uvotec += 1
+
+    try:
+        db.commit()
+
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="You have already voted for this post"
+        )
+
+    return new_vote
+
+
+@router.get("/votes/{id}")
+async def get_vote(id: int,
+                   db: Session = Depends(get_db),
+                    req : dict = Depends(verify_jwt)):
+    vote = db.query(votes.Votes).filter(votes.Votes.id == id).first()
+    if not vote:
+        raise HTTPException(status_code=404, detail="Post not found")
+    return vote
+
+
+@router.delete("/votes/{id}")
+async def delete_vote(id: int,
+                      db: Session = Depends(get_db),
+                    req : dict = Depends(verify_jwt)):
+    vote = db.query(votes.Votes).filter(votes.Votes.id == id).first()
+    if not vote:
+        raise HTTPException(status_code=404, detail="Post not found")
+    post = db.query(posts.Posts).filter(posts.Posts.id == vote.post).first()
+    if vote.type == "down":
+        post.dvotec -= 1
+    else:
+        post.uvotec -= 1
+
+    db.delete(vote)
+    db.commit()
+    return {}
+
+
+
+# =======================================================
 # RESPONSES ENDPOINTS
 # =======================================================
 
@@ -369,27 +447,3 @@ async def get_response(id: int):
 @router.delete("/responses/{response_id}")
 async def delete_response(response_id: int):
     return {"message": f"Delete response {response_id}"}
-
-
-# =======================================================
-# VOTES ENDPOINTS
-# =======================================================
-
-@router.get("/feedbacks/{id}/votes")
-async def get_feedback_votes(id: int):
-    return {"message": f"Get votes for feedback {id}"}
-
-
-@router.post("/feedbacks/{id}/votes")
-async def create_vote(id: int):
-    return {"message": f"Vote for feedback {id}"}
-
-
-@router.get("/votes/{id}")
-async def get_vote(id: int):
-    return {"message": f"Get vote {id}"}
-
-
-@router.delete("/votes/{vote_id}")
-async def delete_vote(vote_id: int):
-    return {"message": f"Delete vote {vote_id}"}

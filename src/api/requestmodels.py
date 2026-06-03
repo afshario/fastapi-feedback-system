@@ -1,4 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field
+from enum import Enum
 
 class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
@@ -31,3 +32,12 @@ class PostUpdate(BaseModel):
 
 class CommentCreate(BaseModel):
     content: str
+
+
+class VoteType(str, Enum):
+    upvote = "up"
+    downvote = "down"
+
+
+class VoteCreate(BaseModel):
+    type: VoteType

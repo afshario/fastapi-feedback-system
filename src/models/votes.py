@@ -1,7 +1,7 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Enum, UniqueConstraint
 import enum
 from sqlalchemy.sql import func
-from src.db import Base
+from db import Base
 
 class VoteType(enum.Enum):
     up = "up"

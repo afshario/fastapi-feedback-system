@@ -15,6 +15,7 @@ class Users(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 
+
 class AdminProfiles(Base):
     __tablename__ = "admin_profiles"
     
