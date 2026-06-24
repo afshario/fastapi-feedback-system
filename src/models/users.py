@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey
+import bcrypt
 from sqlalchemy.sql import func
 from db import Base
 
@@ -13,6 +14,18 @@ class Users(Base):
     password = Column(String(255), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    def set_password(self, password: str):
+        self.password = bcrypt.hashpw(
+            password.encode(),
+            bcrypt.gensalt()
+        ).decode()
+
+    def check_password(self, password: str):
+        return bcrypt.checkpw(
+            password.encode(),
+            self.password.encode()
+        )
 
 
 

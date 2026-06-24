@@ -2,15 +2,11 @@ from fastapi import (APIRouter, status, HTTPException, Depends)
 from db import (Base, engine, get_db)
 from models import (users, posts, tags, comments, votes)
 from sqlalchemy.orm import Session
-from requestmodels import (RegisterRequest, LoginRequest, UpdateUser, PostCreate, PostUpdate, CommentCreate, VoteCreate)
-from responsemodels import (RegisterResponse, UserResponse)
-import bcrypt
-from jose import jwt
-from datetime import datetime, timedelta, timezone
+from .requestmodels import (RegisterRequest, LoginRequest, UpdateUser, PostCreate, PostUpdate, CommentCreate, VoteCreate)
+from .responsemodels import (RegisterResponse, UserResponse, PostResponse)
+from .helpers import (get_object_or_404, create_access_token)
 from .dependencies import verify_jwt
-from config import SECRET_KEY , ALGORITHM
-
-
+from .caching import RedisCache
 
 router = APIRouter()
 Base.metadata.create_all(bind=engine)
@@ -20,51 +16,19 @@ Base.metadata.create_all(bind=engine)
 # AUTH ENDPOINTS
 # =======================================================
 
-def create_access_token(data: dict):
-    to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + timedelta(hours=24)
-    to_encode.update({
-        "exp": expire
-    })
-    return jwt.encode(
-        to_encode,
-        SECRET_KEY,
-        algorithm=ALGORITHM
-    )
-
 @router.post("/auth/login",
     status_code=status.HTTP_200_OK)
 async def login(
     request: LoginRequest,
     db: Session = Depends(get_db)
 ):
-    user = (
-        db.query(users.Users)
-        .filter(users.Users.email == request.email)
-        .first()
-    )
+    
+    user = get_object_or_404(db,users.Users, users.Users.email == request.email)
 
-    if not user:
-        raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid email or password"
-        )
-      
-    password_correct = bcrypt.checkpw(
-        request.password.encode("utf-8"),
-        user.password.encode("utf-8")
-    )
-
-    if not password_correct:
-        raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid email or password"
-        )
-      
     access_token = create_access_token({
-    "sub": str(user.id),
-    "username" : user.username
-    })
+        "sub": user.id,
+        "username" : user.username
+        })
 
     return {
         "access_token": access_token,
@@ -72,10 +36,10 @@ async def login(
     }
       
 
-
 @router.post("/auth/register",
     status_code=status.HTTP_201_CREATED,
-            )
+    response_model= UserResponse
+    )
 async def register(
     request: RegisterRequest,
     db: Session = Depends(get_db)
@@ -85,6 +49,11 @@ async def register(
         .filter(users.Users.username == request.username)
         .first()
     )
+    if existing_username:
+        raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="username already exists"
+        )
     existing_email = (
         db.query(users.Users)
         .filter(users.Users.email == request.email)
@@ -96,22 +65,12 @@ async def register(
                 detail="Email already exists"
         )
       
-    if existing_username:
-        raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="username already exists"
-        )
-      
-    hashed_password = bcrypt.hashpw(
-        request.password.encode("utf-8"),
-        bcrypt.gensalt()
-        ).decode("utf-8")
-      
     new_user = users.Users(
         username=request.username,
         email=request.email,
-        password=hashed_password
     )
+
+    new_user.set_password(request.password)
 
     db.add(new_user)
     db.commit()
@@ -126,38 +85,36 @@ async def register(
 
 @router.get("/users",
         response_model=list[UserResponse],
-        status_code= status.HTTP_200_OK
+        status_code= status.HTTP_200_OK,
+        dependencies=[Depends(verify_jwt)]
 )
-async def get_users(db: Session = Depends(get_db),
-                    req : dict = Depends(verify_jwt)):
+async def get_users(db: Session = Depends(get_db)):
     return db.query(users.Users).all()
 
 
 @router.get("/users/{id}",
             response_model=UserResponse,
-            status_code= status.HTTP_200_OK)
-async def get_user( id: int,
-                    db: Session = Depends(get_db),
-                    req : dict = Depends(verify_jwt)):
-    user = db.query(users.Users).filter(users.Users.id == id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+            status_code= status.HTTP_200_OK,
+            dependencies=[Depends(verify_jwt)])
+async def get_user(id: int,
+                    db: Session = Depends(get_db),):
+    
+    user = get_object_or_404(db,users.Users, users.Users.id == id)
+
     return user
 
 
 
 @router.put("/users/{id}",
             response_model=UserResponse,
-            status_code= status.HTTP_200_OK)
+            status_code= status.HTTP_200_OK,
+            dependencies=[Depends(verify_jwt)])
 async def update_user(id: int,
                     updated_user: UpdateUser,
                     db: Session = Depends(get_db),
-                    req : dict = Depends(verify_jwt),
                     ):
-    user = db.query(users.Users).filter(users.Users.id == id).first()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    
+    user = get_object_or_404(db,users.Users, users.Users.id == id)
     
     existing_username = (
         db.query(users.Users)
@@ -179,9 +136,8 @@ async def update_user(id: int,
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Email already exists"
         )
-    user.username = updated_user.username
-    user.email = updated_user.email
-    user.is_active = updated_user.is_active
+    for key,value in updated_user.model_dump():
+        setattr(user,key,value)
 
     db.commit()
     db.refresh(user)
@@ -190,16 +146,12 @@ async def update_user(id: int,
 
 
 @router.delete("/users/{id}",
-               status_code=status.HTTP_204_NO_CONTENT)
+               status_code=status.HTTP_204_NO_CONTENT,
+               dependencies=[Depends(verify_jwt)])
 async def delete_user(id: int,
-                    db: Session = Depends(get_db),
-                    req : dict = Depends(verify_jwt)):
-    user = db.query(users.Users).filter(users.Users.id == id).first()
-    if not user:
-        raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="user does'nt exist"
-        )
+                    db: Session = Depends(get_db)
+                    ):
+    user = get_object_or_404(db,users.Users,users.Users.id == id)
     db.delete(user)
     db.commit()
 
@@ -208,24 +160,27 @@ async def delete_user(id: int,
 # FEEDBACKS ENDPOINTS
 # =======================================================
 
-@router.get("/feedbacks")
-async def get_feedbacks(db: Session = Depends(get_db),
-                        req : dict = Depends(verify_jwt)):
+@router.get("/feedbacks",
+            status_code=status.HTTP_200_OK,
+            dependencies=[Depends(verify_jwt)],
+            response_model= list[PostResponse])
+async def get_feedbacks(db: Session = Depends(get_db)):
     return db.query(posts.Posts).all()
     
 
-@router.get("/feedbacks/{id}")
+@router.get("/feedbacks/{id}",
+            status_code= status.HTTP_200_OK,
+            dependencies=[Depends(verify_jwt)],
+            response_model= PostResponse)
 async def get_feedback(id: int,
-                       db: Session = Depends(get_db),
-                        req : dict = Depends(verify_jwt)):
-    post = db.query(posts.Posts).filter(posts.Posts.id == id).first()
-    if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
-    
-    return post.tags
+                       db: Session = Depends(get_db)):
+    post = get_object_or_404(db,posts.Posts,posts.Posts.id == id)
+    return post
 
 
-@router.post("/feedbacks")
+@router.post("/feedbacks",
+            status_code= status.HTTP_200_OK,
+            response_model= list[PostResponse])
 async def create_feedback(post_data: PostCreate,
                         db: Session = Depends(get_db),
                         req : dict = Depends(verify_jwt)):
@@ -236,9 +191,7 @@ async def create_feedback(post_data: PostCreate,
     )
 
     for tag_name in post_data.tags:
-        tag = db.query(tags.Tag).filter(tags.Tag.name == tag_name).first()
-        if not tag:
-            continue
+        tag = get_object_or_404(db,tags.Tag,tags.Tag.name == tag_name)
         post.tags.append(tag)
 
     db.add(post)
@@ -248,16 +201,15 @@ async def create_feedback(post_data: PostCreate,
     return post
 
 
-@router.put("/feedbacks/{id}")
+@router.put("/feedbacks/{id}",
+            dependencies=[Depends(verify_jwt)],
+            status_code=status.HTTP_200_OK,
+            response_model= PostResponse)
 async def update_feedback(id: int,
                           updated_post : PostUpdate,
-                        db: Session = Depends(get_db),
-                        req : dict = Depends(verify_jwt)):
+                        db: Session = Depends(get_db)):
     
-    post = db.query(posts.Posts).filter(posts.Posts.id == id).first()
-    if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
-
+    post = get_object_or_404(db,posts.Posts,posts.Posts.id == id)
     update_data = updated_post.model_dump(exclude_unset=True)
     tag_names = update_data.pop("tags", None)
 
@@ -265,15 +217,10 @@ async def update_feedback(id: int,
         setattr(post, key, value)
 
     if tag_names is not None:
-    
         post.tags.clear()
-
         for tag_name in tag_names:
-            tag = db.query(tags.Tag)\
-                .filter(tags.Tag.name == tag_name)\
-                .first()
-            if tag:
-                post.tags.append(tag)
+            tag = get_object_or_404(db,tags.Tag,tags.Tag.name == tag_name)
+            post.tags.append(tag)
 
     db.add(post)
     db.commit()
@@ -282,13 +229,12 @@ async def update_feedback(id: int,
     return post
 
 
-@router.delete("/feedbacks/{id}")
+@router.delete("/feedbacks/{id}",
+               dependencies=[Depends(verify_jwt)],
+                status_code=status.HTTP_204_NO_CONTENT)
 async def delete_feedback(id: int,
-                          db: Session = Depends(get_db),
-                          req : dict = Depends(verify_jwt)):
-    post = db.query(posts.Posts).filter(posts.Posts.id == id).first()
-    if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
+                          db: Session = Depends(get_db)):
+    post = get_object_or_404(db,posts.Posts,posts.Posts.id == id)
     db.delete(post)
     db.commit()
 
@@ -297,25 +243,23 @@ async def delete_feedback(id: int,
 # COMMENTS ENDPOINTS
 # =======================================================
 
-@router.get("/feedbacks/{id}/comments")
+@router.get("/feedbacks/{id}/comments",
+            dependencies=[Depends(verify_jwt)],
+            status_code=status.HTTP_200_OK)
 async def get_feedback_comments(id: int,
-                                db: Session = Depends(get_db),
-                                req : dict = Depends(verify_jwt)):
-    post = db.query(posts.Posts).filter(posts.Posts.id == id).first()
-    if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
+                                db: Session = Depends(get_db)):
+    post = get_object_or_404(db,posts.Posts,posts.Posts.id == id)
     comment = db.query(comments.Comments).filter(comments.Comments.post == id).all()
     return comment
 
 
-@router.post("/feedbacks/{id}/comments")
+@router.post("/feedbacks/{id}/comments",
+             status_code=status.HTTP_200_OK)
 async def create_comment(id: int,
                         comment : CommentCreate,
                         db: Session = Depends(get_db),
                         req : dict = Depends(verify_jwt)):
-    post = db.query(posts.Posts).filter(posts.Posts.id == id).first()
-    if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
+    post = get_object_or_404(db,posts.Posts,posts.Posts.id == id)
     new_comment = comments.Comments(
         writer = req["username"],
         post = id,
@@ -327,53 +271,48 @@ async def create_comment(id: int,
     return new_comment
 
 
-@router.get("/comments/{id}")
+@router.get("/comments/{id}",
+            dependencies=[Depends(verify_jwt)],
+            status_code=status.HTTP_200_OK)
 async def get_comment(id: int,
-                    db: Session = Depends(get_db),
-                    req : dict = Depends(verify_jwt)):
-    comment = db.query(comments.Comments).filter(comments.Comments.id == id).first()
-    if not comment:
-        raise HTTPException(status_code=404, detail="comment not found")
+                    db: Session = Depends(get_db)):
+    comment = get_object_or_404(db,comments.Comments,comments.Comments.id == id)
     
     return comment
 
 
 @router.delete("/comments/{id}",
+               dependencies=[Depends(verify_jwt)],
                status_code= status.HTTP_204_NO_CONTENT)
 async def delete_comment(id: int,
-                        db: Session = Depends(get_db),
-                        req : dict = Depends(verify_jwt)):
+                        db: Session = Depends(get_db)):
 
-    comment = db.query(comments.Comments).filter(comments.Comments.id == id).first()
-    if not comment:
-        raise HTTPException(status_code=404, detail="comment not found")
+    comment = get_object_or_404(db,comments.Comments,comments.Comments.id == id)
     
     db.delete(comment)
     db.commit()
-
-    return {}
 
 # =======================================================
 # VOTES ENDPOINTS
 # =======================================================
 
-@router.get("/feedbacks/{id}/votes")
+@router.get("/feedbacks/{id}/votes",
+            dependencies=[Depends(verify_jwt)],
+            status_code=status.HTTP_200_OK)
 async def get_feedback_votes(id: int,
-                            db: Session = Depends(get_db),
-                            req : dict = Depends(verify_jwt)):
+                            db: Session = Depends(get_db)):
 
     return db.query(votes.Votes).filter(votes.Votes.post == id).all()
 
 
-@router.post("/feedbacks/{id}/votes")
+@router.post("/feedbacks/{id}/votes",
+             status_code=status.HTTP_200_OK)
 async def create_vote(id: int,
-                      vote: VoteCreate,
+                    vote: VoteCreate,
                     db: Session = Depends(get_db),
                     req : dict = Depends(verify_jwt)):
     
-    post = db.query(posts.Posts).filter(posts.Posts.id == id).first()
-    if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
+    post = get_object_or_404(db,posts.Posts,posts.Posts.id == id)
     
     new_vote = votes.Votes(
         voter=req["sub"],
@@ -401,23 +340,21 @@ async def create_vote(id: int,
     return new_vote
 
 
-@router.get("/votes/{id}")
+@router.get("/votes/{id}",
+            dependencies=[Depends(verify_jwt)],
+            status_code=status.HTTP_200_OK)
 async def get_vote(id: int,
-                   db: Session = Depends(get_db),
-                    req : dict = Depends(verify_jwt)):
-    vote = db.query(votes.Votes).filter(votes.Votes.id == id).first()
-    if not vote:
-        raise HTTPException(status_code=404, detail="Post not found")
+                   db: Session = Depends(get_db)):
+    vote = get_object_or_404(db,votes.Votes,votes.Votes.id == id)
     return vote
 
 
-@router.delete("/votes/{id}")
+@router.delete("/votes/{id}",
+            dependencies=[Depends(verify_jwt)],
+            status_code=status.HTTP_204_NO_CONTENT)
 async def delete_vote(id: int,
-                      db: Session = Depends(get_db),
-                    req : dict = Depends(verify_jwt)):
-    vote = db.query(votes.Votes).filter(votes.Votes.id == id).first()
-    if not vote:
-        raise HTTPException(status_code=404, detail="Post not found")
+                      db: Session = Depends(get_db)):
+    vote = get_object_or_404(db,votes.Votes,votes.Votes.id == id)
     post = db.query(posts.Posts).filter(posts.Posts.id == vote.post).first()
     if vote.type == "down":
         post.dvotec -= 1
@@ -426,7 +363,6 @@ async def delete_vote(id: int,
 
     db.delete(vote)
     db.commit()
-    return {}
 
 
 
