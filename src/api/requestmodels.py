@@ -41,3 +41,7 @@ class VoteType(str, Enum):
 
 class VoteCreate(BaseModel):
     type: VoteType
+    
+    
+class ResponseCreate(BaseModel):
+    content: str

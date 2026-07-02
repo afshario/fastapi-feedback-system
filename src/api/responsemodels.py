@@ -28,3 +28,10 @@ class PostResponse(BaseModel):
 
     class Config:
         from_attributes = True
+        
+        
+class ResponseResponse(BaseModel):
+    id: int
+    post_id: int
+    admin_id: int
+    content: str

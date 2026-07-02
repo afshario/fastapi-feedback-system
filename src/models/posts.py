@@ -22,3 +22,6 @@ class Posts(Base):
     tags = relationship("Tag",secondary=post_tags, back_populates="posts")
     is_open = Column(Boolean, default= True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    responses = relationship("Responses", back_populates="post")
+    
+    

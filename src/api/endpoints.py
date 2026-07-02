@@ -1,12 +1,12 @@
 from fastapi import (APIRouter, status, HTTPException, Depends)
 from db import (Base, engine, get_db)
-from models import (users, posts, tags, comments, votes)
+from models import (users, posts, tags, comments, votes, responses)
 from sqlalchemy.orm import Session
-from .requestmodels import (RegisterRequest, LoginRequest, UpdateUser, PostCreate, PostUpdate, CommentCreate, VoteCreate)
-from .responsemodels import (RegisterResponse, UserResponse, PostResponse)
+from .requestmodels import (RegisterRequest, LoginRequest, UpdateUser, PostCreate, PostUpdate, CommentCreate, VoteCreate, ResponseCreate)
+from .responsemodels import (RegisterResponse, UserResponse, PostResponse, ResponseResponse)
 from .helpers import (get_object_or_404, create_access_token)
 from .dependencies import verify_jwt
-from .caching import RedisCache
+# from .caching import RedisCache
 
 router = APIRouter()
 Base.metadata.create_all(bind=engine)
@@ -26,7 +26,7 @@ async def login(
     user = get_object_or_404(db,users.Users, users.Users.email == request.email)
 
     access_token = create_access_token({
-        "sub": user.id,
+        "sub": str(user.id),
         "username" : user.username
         })
 
@@ -90,7 +90,6 @@ async def register(
 )
 async def get_users(db: Session = Depends(get_db)):
     return db.query(users.Users).all()
-
 
 @router.get("/users/{id}",
             response_model=UserResponse,
@@ -180,7 +179,7 @@ async def get_feedback(id: int,
 
 @router.post("/feedbacks",
             status_code= status.HTTP_200_OK,
-            response_model= list[PostResponse])
+            response_model= PostResponse)
 async def create_feedback(post_data: PostCreate,
                         db: Session = Depends(get_db),
                         req : dict = Depends(verify_jwt)):
@@ -370,16 +369,86 @@ async def delete_vote(id: int,
 # RESPONSES ENDPOINTS
 # =======================================================
 
-@router.get("/feedbacks/{id}/response")
-async def get_feedback_response(id: int):
-    return {"message": f"Get admin response for feedback {id}"}
+@router.get("/feedbacks/{id}/response",
+            response_model=ResponseResponse,
+            status_code=status.HTTP_200_OK,
+            dependencies=[Depends(verify_jwt)])
+async def get_feedback_response(id: int, db: Session = Depends(get_db)):
+    get_object_or_404(db, posts.Posts, posts.Posts.id == id)
+    
+    response = db.query(responses.Responses).filter(responses.Responses.post_id == id).first()
+    if not response:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No admin response found for this feedback"
+        )
+    return response
 
 
-@router.get("/responses/{id}")
-async def get_response(id: int):
-    return {"message": f"Get response {id}"}
+@router.post("/feedbacks/{id}/response",
+             status_code=status.HTTP_201_CREATED,
+             response_model=ResponseResponse)
+async def create_feedback_response(
+    id: int,
+    response_data: ResponseCreate,
+    db: Session = Depends(get_db),
+    req: dict = Depends(verify_jwt)
+):
+    post = get_object_or_404(db, posts.Posts, posts.Posts.id == id)
+    if not get_object_or_404(db, users.Users, users.Users.id == int(req["sub"])).is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+        
+    new_response = responses.Responses(
+        post_id=id,
+        admin_id=req["sub"],
+        content=response_data.content
+    )
+
+    db.add(new_response)
+    db.commit()
+    db.refresh(new_response)
+    return new_response
 
 
-@router.delete("/responses/{response_id}")
-async def delete_response(response_id: int):
-    return {"message": f"Delete response {response_id}"}
+@router.get("/responses/{id}",
+            response_model=ResponseResponse,
+            status_code=status.HTTP_200_OK,
+            dependencies=[Depends(verify_jwt)])
+async def get_response(id: int, db: Session = Depends(get_db)):
+    return get_object_or_404(db, responses.Responses, responses.Responses.id == id)
+
+
+@router.put("/responses/{id}",
+            response_model=ResponseResponse,
+            status_code=status.HTTP_200_OK)
+async def update_response(
+    id: int,
+    response_data: ResponseCreate,
+    db: Session = Depends(get_db),
+    req: dict = Depends(verify_jwt)
+):
+    if not get_object_or_404(db, users.Users, users.Users.id == int(req["sub"])).is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+    response = get_object_or_404(db, responses.Responses, responses.Responses.id == id)
+    response.content = response_data.content
+    db.commit()
+    db.refresh(response)
+    return response
+
+
+@router.delete("/responses/{id}",
+               status_code=status.HTTP_204_NO_CONTENT,
+               dependencies=[Depends(verify_jwt)])
+async def delete_response(id: int, db: Session = Depends(get_db),
+                          req: dict = Depends(verify_jwt)):
+    if not get_object_or_404(db, users.Users, users.Users.id == int(req["sub"])).is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+    response = get_object_or_404(db, responses.Responses, responses.Responses.id == id)
+    db.delete(response)
+    db.commit()
