@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+
+{% block title %}فیدبک‌ها{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gray-50">
+    <nav class="bg-white shadow-sm border-b">
+        <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+            <h1 class="text-2xl font-bold text-gray-800">فیدبک</h1>
+            <div class="flex items-center gap-4">
+                <button onclick="createFeedback()" 
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-2xl text-sm font-medium">
+                    + فیدبک جدید
+                </button>
+                <button onclick="logout()" class="text-red-600 hover:text-red-700 font-medium">خروج</button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-7xl mx-auto px-6 py-10">
+        <h2 class="text-3xl font-bold mb-8">فیدبک‌ها</h2>
+        <div id="feedbacks-container" class="space-y-8"></div>
+    </div>
+</div>
+
+<!-- Create Feedback Modal -->
+<div id="createModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-white rounded-3xl w-full max-w-lg mx-4 p-6">
+        <h3 class="text-xl font-semibold mb-4">فیدبک جدید</h3>
+        <form id="feedbackForm">
+            <input type="text" id="title" placeholder="عنوان" required class="w-full px-4 py-3 border rounded-2xl mb-4">
+            <textarea id="content" rows="5" placeholder="توضیحات..." required class="w-full px-4 py-3 border rounded-2xl mb-6"></textarea>
+            <div class="flex gap-3">
+                <button type="button" onclick="closeModal()" class="flex-1 py-3 border rounded-2xl">انصراف</button>
+                <button type="submit" class="flex-1 py-3 bg-blue-600 text-white rounded-2xl">ارسال</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+const token = localStorage.getItem('access_token');
+
+async function loadFeedbacks() {
+    const container = document.getElementById('feedbacks-container');
+    container.innerHTML = '<p class="text-center py-12">در حال بارگذاری...</p>';
+
+    try {
+        const res = await fetch('/api/feedbacks');
+        const feedbacks = await res.json();
+
+        container.innerHTML = '';
+
+        for (const fb of feedbacks) {
+            const comments = await loadComments(fb.id);
+
+            const cardHTML = `
+                <div class="bg-white rounded-3xl shadow p-6">
+                    <h3 class="text-xl font-semibold">${fb.title}</h3>
+                    <p class="text-gray-500 text-sm">توسط ${fb.author} • ${new Date(fb.created_at).toLocaleDateString('fa-IR')}</p>
+                    <p class="mt-4 text-gray-700">${fb.content}</p>
+
+                    <!-- Votes -->
+                    <div class="flex gap-6 mt-6 text-lg">
+                        <button onclick="vote(${fb.id}, 'up')" class="flex items-center gap-2 text-green-600 hover:text-green-700">
+                            👍 <span id="up-${fb.id}">${fb.uvotec || 0}</span>
+                        </button>
+                        <button onclick="vote(${fb.id}, 'down')" class="flex items-center gap-2 text-red-600 hover:text-red-700">
+                            👎 <span id="down-${fb.id}">${fb.dvotec || 0}</span>
+                        </button>
+                    </div>
+
+                    <!-- Comments -->
+                    <div class="mt-6 border-t pt-5">
+                        <h4 class="font-medium mb-3">نظرات (${comments.length})</h4>
+                        <div class="space-y-3 mb-4" id="comments-container-${fb.id}">
+                            ${comments.map(c => `
+                                <div class="bg-gray-50 p-4 rounded-2xl">
+                                    <strong class="text-sm">${c.writer}</strong>
+                                    <p class="text-gray-700">${c.content}</p>
+                                </div>
+                            `).join('') || '<p class="text-gray-400 text-sm">هنوز نظری ثبت نشده</p>'}
+                        </div>
+
+                        <div class="flex gap-2">
+                            <input type="text" id="comment-input-${fb.id}" 
+                                   placeholder="نظر خود را بنویسید..." 
+                                   class="flex-1 border rounded-2xl px-4 py-3 text-sm focus:outline-none">
+                            <button onclick="addComment(${fb.id})" 
+                                    class="bg-blue-600 hover:bg-blue-700 text-white px-6 rounded-2xl">ارسال</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            container.innerHTML += cardHTML;
+        }
+    } catch (err) {
+        console.error(err);
+        container.innerHTML = `<p class="text-red-500 text-center py-12">خطا در بارگذاری فیدبک‌ها</p>`;
+    }
+}
+
+async function loadComments(feedbackId) {
+    try {
+        const res = await fetch(`/api/feedbacks/${feedbackId}/comments`);
+        if (res.ok) {
+            return await res.json();
+        }
+        return [];
+    } catch {
+        return [];
+    }
+}
+
+async function addComment(feedbackId) {
+    if (!token) return alert("برای کامنت گذاشتن وارد شوید");
+
+    const input = document.getElementById(`comment-input-${feedbackId}`);
+    const content = input.value.trim();
+    if (!content) return;
+
+    try {
+        const res = await fetch(`/api/feedbacks/${feedbackId}/comments`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ content })
+        });
+
+        if (res.ok) {
+            input.value = '';
+            loadFeedbacks();   // Refresh all
+        }
+    } catch (err) {
+        alert("خطا در ارسال کامنت");
+    }
+}
+
+async function vote(feedbackId, type) {
+    if (!token) return alert("برای رای دادن وارد شوید");
+
+    try {
+        await fetch(`/api/feedbacks/${feedbackId}/votes`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ type })
+        });
+        loadFeedbacks();
+    } catch (err) {
+        alert("خطا در ثبت رای");
+    }
+}
+
+// Create Feedback Modal Functions
+function createFeedback() {
+    if (!token) return alert("ابتدا وارد شوید");
+    document.getElementById('createModal').classList.remove('hidden');
+}
+
+function closeModal() {
+    document.getElementById('createModal').classList.add('hidden');
+}
+
+document.getElementById('feedbackForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    // ... (همان کد قبلی)
+    const data = {
+        title: document.getElementById('title').value,
+        content: document.getElementById('content').value,
+        tags: []
+    };
+
+    try {
+        const res = await fetch('/api/feedbacks', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify(data)
+        });
+        if (res.ok) {
+            alert('فیدبک ارسال شد');
+            closeModal();
+            loadFeedbacks();
+        }
+    } catch (err) {}
+});
+
+function logout() {
+    localStorage.removeItem('access_token');
+    window.location.href = '/login';
+}
+
+// Start
+loadFeedbacks();
+</script>
+{% endblock %}

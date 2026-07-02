@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+
+{% block title %}داشبورد ادمین{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gray-100">
+    <!-- Navbar -->
+    <nav class="bg-white shadow-sm border-b">
+        <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+            <h1 class="text-2xl font-bold text-gray-800">داشبورد ادمین</h1>
+            <div class="flex items-center gap-4">
+                <a href="/" class="text-gray-600 hover:text-gray-900">صفحه اصلی</a>
+                <button onclick="logout()" 
+                        class="text-red-600 hover:text-red-700 font-medium">خروج</button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-7xl mx-auto px-6 py-8">
+        <h2 class="text-3xl font-bold mb-8">مدیریت فیدبک‌ها</h2>
+
+        <!-- Stats -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+            <div class="bg-white p-6 rounded-3xl shadow">
+                <p class="text-gray-500 text-sm">کل فیدبک‌ها</p>
+                <p id="total-count" class="text-4xl font-bold text-gray-800 mt-2">0</p>
+            </div>
+            <div class="bg-white p-6 rounded-3xl shadow">
+                <p class="text-gray-500 text-sm">بدون پاسخ</p>
+                <p id="pending-count" class="text-4xl font-bold text-amber-600 mt-2">0</p>
+            </div>
+        </div>
+
+        <!-- Feedbacks List -->
+        <div id="admin-feedbacks" class="space-y-6">
+            <!-- Populated by JavaScript -->
+        </div>
+    </div>
+</div>
+
+<!-- Response Modal -->
+<div id="responseModal" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
+    <div class="bg-white rounded-3xl w-full max-w-lg mx-4">
+        <div class="p-6 border-b flex justify-between items-center">
+            <h3 class="text-xl font-semibold">ثبت پاسخ</h3>
+            <button onclick="closeResponseModal()" class="text-gray-400 hover:text-gray-600 text-2xl">×</button>
+        </div>
+        <div class="p-6">
+            <input type="hidden" id="feedbackId">
+            <textarea id="responseContent" rows="6" placeholder="متن پاسخ را اینجا بنویسید..." 
+                      class="w-full px-4 py-3 border border-gray-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+            
+            <div class="flex gap-3 mt-6">
+                <button onclick="closeResponseModal()" 
+                        class="flex-1 py-3 border border-gray-300 rounded-2xl text-gray-700 font-medium">
+                    انصراف
+                </button>
+                <button onclick="submitResponse()" 
+                        class="flex-1 py-3 bg-indigo-600 text-white rounded-2xl font-medium hover:bg-indigo-700">
+                    ارسال پاسخ
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const token = localStorage.getItem('access_token');
+
+async function loadAdminFeedbacks() {
+    try {
+        const res = await fetch('/api/feedbacks', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const feedbacks = await res.json();
+
+        const container = document.getElementById('admin-feedbacks');
+        container.innerHTML = '';
+
+        let pending = 0;
+
+        feedbacks.forEach(fb => {
+            const hasResponse = fb.responses && fb.responses.length > 0;
+            if (!hasResponse) pending++;
+
+            const card = `
+                <div class="bg-white rounded-3xl shadow p-6">
+                    <div class="flex justify-between">
+                        <h3 class="font-semibold text-lg">${fb.title}</h3>
+                        <span class="text-xs px-3 py-1 rounded-full ${hasResponse ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}">
+                            ${hasResponse ? 'پاسخ داده شده' : 'بدون پاسخ'}
+                        </span>
+                    </div>
+                    <p class="text-gray-600 mt-2 line-clamp-2">${fb.content}</p>
+                    <p class="text-sm text-gray-500 mt-3">توسط: ${fb.author}</p>
+                    
+                    <button onclick="openResponseModal(${fb.id})" 
+                            class="mt-5 text-indigo-600 hover:text-indigo-700 font-medium text-sm flex items-center gap-2">
+                        <i class="fas fa-reply"></i>
+                        ${hasResponse ? 'ویرایش پاسخ' : 'ثبت پاسخ'}
+                    </button>
+                </div>
+            `;
+            container.innerHTML += card;
+        });
+
+        document.getElementById('total-count').textContent = feedbacks.length;
+        document.getElementById('pending-count').textContent = pending;
+
+    } catch (err) {
+        console.error(err);
+        alert('خطا در بارگذاری اطلاعات');
+    }
+}
+
+let currentFeedbackId = null;
+
+function openResponseModal(feedbackId) {
+    currentFeedbackId = feedbackId;
+    document.getElementById('responseModal').classList.remove('hidden');
+    document.getElementById('responseContent').focus();
+}
+
+function closeResponseModal() {
+    document.getElementById('responseModal').classList.add('hidden');
+    document.getElementById('responseContent').value = '';
+}
+
+async function submitResponse() {
+    const content = document.getElementById('responseContent').value.trim();
+    if (!content) return alert('لطفا متن پاسخ را وارد کنید');
+
+    try {
+        const res = await fetch(`/api/feedbacks/${currentFeedbackId}/response`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ content: content })
+        });
+
+        if (res.ok) {
+            alert('پاسخ با موفقیت ثبت شد');
+            closeResponseModal();
+            loadAdminFeedbacks();
+        } else {
+            alert('خطا در ثبت پاسخ');
+        }
+    } catch (err) {
+        alert('خطا در ارتباط با سرور');
+    }
+}
+
+function logout() {
+    localStorage.removeItem('access_token');
+    window.location.href = '/login';
+}
+
+// Load data on page load
+loadAdminFeedbacks();
+</script>
+{% endblock %}

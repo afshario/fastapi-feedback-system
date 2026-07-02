@@ -161,7 +161,6 @@ async def delete_user(id: int,
 
 @router.get("/feedbacks",
             status_code=status.HTTP_200_OK,
-            dependencies=[Depends(verify_jwt)],
             response_model= list[PostResponse])
 async def get_feedbacks(db: Session = Depends(get_db)):
     return db.query(posts.Posts).all()
@@ -169,7 +168,6 @@ async def get_feedbacks(db: Session = Depends(get_db)):
 
 @router.get("/feedbacks/{id}",
             status_code= status.HTTP_200_OK,
-            dependencies=[Depends(verify_jwt)],
             response_model= PostResponse)
 async def get_feedback(id: int,
                        db: Session = Depends(get_db)):
@@ -243,7 +241,6 @@ async def delete_feedback(id: int,
 # =======================================================
 
 @router.get("/feedbacks/{id}/comments",
-            dependencies=[Depends(verify_jwt)],
             status_code=status.HTTP_200_OK)
 async def get_feedback_comments(id: int,
                                 db: Session = Depends(get_db)):
@@ -271,7 +268,6 @@ async def create_comment(id: int,
 
 
 @router.get("/comments/{id}",
-            dependencies=[Depends(verify_jwt)],
             status_code=status.HTTP_200_OK)
 async def get_comment(id: int,
                     db: Session = Depends(get_db)):
@@ -296,7 +292,6 @@ async def delete_comment(id: int,
 # =======================================================
 
 @router.get("/feedbacks/{id}/votes",
-            dependencies=[Depends(verify_jwt)],
             status_code=status.HTTP_200_OK)
 async def get_feedback_votes(id: int,
                             db: Session = Depends(get_db)):
@@ -452,3 +447,4 @@ async def delete_response(id: int, db: Session = Depends(get_db),
     response = get_object_or_404(db, responses.Responses, responses.Responses.id == id)
     db.delete(response)
     db.commit()
+    
